@@ -3,9 +3,19 @@ from collections import defaultdict
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from utils.llm import get_model_name
 
-llm_mini = ChatOpenAI(model="gpt-4o-mini")
-embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+# Use environment base URL if available
+api_base = os.environ.get('OPENAI_API_BASE', None)
+
+llm_mini = ChatOpenAI(
+    model=get_model_name("gpt-4o-mini"),
+    openai_api_base=api_base
+)
+embeddings = OpenAIEmbeddings(
+    model=get_model_name("text-embedding-3-large"),
+    openai_api_base=api_base
+)
 
 from database.users import get_all_ratings
 from database.auth import get_user_from_uid

@@ -108,6 +108,20 @@ This README provides a quick setup guide for the Omi backend. For a comprehensiv
     deactivate
     ```
 
+## Local LLM Setup with Ollama (Optional)
+
+Omi can be configured to use Ollama as a local alternative to OpenAI. See the [Ollama Integration Guide](../ollama-integration.md) for detailed instructions.
+
+1. The backend directory already contains a `docker-compose.yml` with an Ollama service configured as `llm-service`
+2. Ensure your `.env` file contains:
+   ```
+   OPENAI_API_BASE=http://localhost:11434/v1
+   OPENAI_API_KEY=ollama
+   ```
+3. Start the services using the existing docker-compose: `cd backend && docker compose up -d`
+4. Pull the required models for Ollama as described in the integration guide
+5. The backend code will automatically use Ollama instead of OpenAI when these environment variables are set
+
 ## Additional Resources
 
 - [Full Backend Setup Documentation](https://docs.omi.me/developer/backend/Backend_Setup)

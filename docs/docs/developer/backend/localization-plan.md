@@ -6,6 +6,7 @@ description: 'Running Omi with local/open-source services'
 # Omi Backend Localization Plan
 
 This document outlines a strategy for replacing cloud-based services in the Omi backend with local or open-source alternatives. The goal is to create a more self-hosted, privacy-focused version of the Omi backend that can run entirely on your own infrastructure.
+The priority is to get to a fully local quick deploy setup ASAP.
 
 ## Overview of Dependencies
 
@@ -192,4 +193,166 @@ Use the Omi API endpoints that interact with OpenAI to verify that they now work
 
 ## Next Steps
 
-After successfully replacing OpenAI with Ollama, proceed to Phase 2 to implement a local vector database as a replacement for Pinecone. 
+After successfully replacing OpenAI with Ollama, proceed to Phase 2 to implement a local vector database as a replacement for Pinecone.
+
+## Context Summary
+
+Based on our initial implementation efforts, here are the specific files and modifications needed for Phase 1:
+
+### Key Files to Modify
+
+1. **`backend/utils/llm.py`**
+   - This is the central file for LLM integration via LangChain
+   - Contains all ChatOpenAI instance definitions and OpenAIEmbeddings configurations
+
+2. **`backend/.env`**
+   - Need to add:
+   ```
+   OPENAI_API_BASE=http://localhost:11434/v1 
+   OPENAI_API_KEY=ollama
+   ```
+
+### Model Mapping Strategy
+
+We've implemented a model mapping system to translate between OpenAI and Ollama models:
+
+```python
+OPENAI_TO_OLLAMA_MODELS = {
+    'gpt-4o-mini': 'llama3',       # Using Llama3 as a substitute for gpt-4o-mini
+    'gpt-4o': 'llama3:8b',         # Using Llama3 8B as a substitute for gpt-4o
+    'o1-preview': 'llama3',        # Using Llama3 as a substitute for o1-preview
+    'text-embedding-3-large': 'nomic-embed-text'  # For embeddings
+}
+```
+
+### Required Ollama Models
+
+For complete functionality, you'll need to download these models:
+- `llama3` - Primary chat model (substitute for gpt-4o-mini and o1-preview)
+- `llama3:8b` - Medium-sized model (substitute for gpt-4o)
+- `nomic-embed-text` - For generating text embeddings
+
+### Implementation Approach
+
+The implementation modifies the LLM instance creation by:
+1. Adding a function to dynamically select the appropriate model based on environment
+2. Checking for the `OPENAI_API_BASE` environment variable to determine if Ollama should be used
+3. Passing the API base URL to all LangChain model instances
+
+This approach allows for a graceful fallback to OpenAI if needed and maintains compatibility with the existing codebase.
+
+### Additional Files Requiring Updates
+
+Beyond the central `utils/llm.py` file, several other files instantiate OpenAI clients directly and need to be updated:
+
+#### Scripts Directory
+1. **`backend/scripts/stt/h_brainstorming.py`**
+   - Update direct OpenAI client instantiation to use environment variables
+   - Replace `client = OpenAI()` with `client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'), base_url=os.getenv('OPENAI_API_BASE'))`
+
+2. **`backend/scripts/users/retrieval.py`**
+   - Update ChatOpenAI and OpenAIEmbeddings instantiations to use model mapping
+   - Import `get_model_name` from `utils.llm` and apply to all model names
+
+3. **`backend/scripts/rag/_shared.py`**
+   - Update OpenAIEmbeddings instantiation to use model mapping
+
+4. **`backend/scripts/nps.py`**
+   - Update ChatOpenAI and OpenAIEmbeddings instantiations to use model mapping
+
+#### Utils Directory (outside of llm.py)
+1. **`backend/utils/retrieval/graph_realtime.py`** and **`backend/utils/retrieval/graph.py`**
+   - Update ChatOpenAI instantiations to use model mapping
+
+2. **`backend/utils/other/chat_file.py`**
+   - Ensure OpenAI client initialization respects base URL configuration
+
+#### Plugin Examples
+Multiple plugin examples in `plugins/example/` directory contain direct OpenAI client instantiations that need to be updated to support the Ollama API base URL.
+
+The pattern for updates is consistent across files:
+
+1. Import the model mapping function:
+   ```python
+   from utils.llm import get_model_name
+   ```
+
+2. Update OpenAI client instantiations:
+   ```python
+   client = OpenAI(
+       api_key=os.getenv('OPENAI_API_KEY'),
+       base_url=os.getenv('OPENAI_API_BASE')
+   )
+   ```
+
+3. Update ChatOpenAI instantiations:
+   ```python
+   model = ChatOpenAI(
+       model=get_model_name('gpt-4o-mini'),
+       openai_api_base=os.getenv('OPENAI_API_BASE')
+   )
+   ```
+
+4. Update OpenAIEmbeddings instantiations:
+   ```python
+   embeddings = OpenAIEmbeddings(
+       model=get_model_name('text-embedding-3-large'),
+       openai_api_base=os.getenv('OPENAI_API_BASE')
+   )
+   ```
+
+## Chosen Local Alternatives
+
+Based on our analysis, we've selected the following local alternatives to replace Firebase services:
+
+### Database: MongoDB
+- Replaces Firestore for document storage
+- Maintains similar document structure and query patterns
+- Flexible schema for varying memory structures
+- Easy migration path from Firestore
+- No external API keys required
+
+### Authentication: FastAPI + JWT
+- Replaces Firebase Auth with custom FastAPI authentication
+- Self-contained solution with no external dependencies
+- JWT-based token system for secure authentication
+- Built-in password hashing and security features
+- Easy integration with MongoDB
+- Supports all current auth features:
+  - User registration and login
+  - Token management
+  - Password reset
+  - Profile management
+  - Session handling
+
+### Storage: Local File System
+- Replaces Firebase Storage with local file system
+- Uses `STORAGE_PATH` environment variable for configuration
+- Volume mounting for containerized deployments
+- Simple and secure file management
+- No external dependencies
+
+### Messaging: RabbitMQ
+- Replaces Firebase Cloud Messaging
+- Handles both real-time notifications and background tasks
+- Can be containerized easily
+- No external API keys required
+- Provides reliable message delivery and queue management
+
+### Benefits of This Approach
+1. **Minimal External Dependencies**: No need for external API keys or services
+2. **Complete Control**: Full control over data and infrastructure
+3. **Simplified Architecture**: Fewer moving parts and services to manage
+4. **Cost Effective**: No usage-based pricing or external service costs
+5. **Privacy Focused**: All data stays within your infrastructure
+6. **Document-First**: Maintains document-style storage for flexible data structures
+7. **Self-Contained Auth**: Full control over authentication with no external dependencies
+
+### Implementation Considerations
+1. **Database Migration**: Need to migrate Firestore data to MongoDB schema
+2. **Auth Migration**: 
+   - Implement FastAPI auth system
+   - Convert Firebase auth tokens to JWT
+   - Migrate user data to MongoDB
+3. **File Storage**: Implement file handling and serving logic
+4. **Message Queue**: Set up RabbitMQ for notification delivery 

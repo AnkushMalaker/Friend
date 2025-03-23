@@ -1,6 +1,7 @@
 import datetime
 import uuid
 import asyncio
+import os
 from typing import List, Optional, Tuple, AsyncGenerator
 
 from langchain.callbacks.base import BaseCallbackHandler
@@ -36,13 +37,24 @@ from utils.llm import (
     select_structured_filters,
     extract_question_from_conversation,
     generate_embedding,
+    get_model_name,
 )
 from utils.other.chat_file import FileChatTool
 from utils.other.endpoints import timeit
 from utils.plugins import get_github_docs_content
 
-model = ChatOpenAI(model="gpt-4o-mini")
-llm_medium_stream = ChatOpenAI(model='gpt-4o', streaming=True)
+# Use environment base URL if available
+api_base = os.environ.get('OPENAI_API_BASE', None)
+
+model = ChatOpenAI(
+    model=get_model_name("gpt-4o-mini"),
+    openai_api_base=api_base
+)
+llm_medium_stream = ChatOpenAI(
+    model=get_model_name('gpt-4o'), 
+    streaming=True,
+    openai_api_base=api_base
+)
 
 
 class StructuredFilters(TypedDict):

@@ -23,7 +23,10 @@ filename = 'data/more/18-42-24-841626.wav'
 
 
 def execute():
-    client = OpenAI()
+    client = OpenAI(
+        api_key=os.getenv('OPENAI_API_KEY'),
+        base_url=os.getenv('OPENAI_API_BASE')
+    )
     with open(filename, "rb") as file:
         transcription = client.audio.transcriptions.create(
             file=(filename, file.read()),
@@ -57,7 +60,10 @@ def execute_groq():
 
 @timeit
 def diarization(content: str):
-    # client = OpenAI()
+    # client = OpenAI(
+    #     api_key=os.getenv('OPENAI_API_KEY'),
+    #     base_url=os.getenv('OPENAI_API_BASE')
+    # )
     client = Groq()
     system_prompt = '''You are a helpful assistant for correcting transcriptions of conversations.\
     Correct any spelling discrepancies in the transcribed text, add necessary punctuation such as periods, commas, \

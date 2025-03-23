@@ -11,6 +11,7 @@ from typing_extensions import TypedDict
 
 from models.transcript_segment import TranscriptSegment
 from utils.other.endpoints import timeit
+from utils.llm import get_model_name
 
 # os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '../../' + os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 
@@ -22,7 +23,13 @@ from models.memory import Memory
 from utils.llm import select_structured_filters, generate_embedding, extract_question_from_transcript, \
     provide_advice_message
 
-model = ChatOpenAI(model='gpt-4o-mini')
+# Use environment base URL if available
+api_base = os.environ.get('OPENAI_API_BASE', None)
+
+model = ChatOpenAI(
+    model=get_model_name('gpt-4o-mini'),
+    openai_api_base=api_base
+)
 
 
 class StructuredFilters(TypedDict):

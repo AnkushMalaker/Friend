@@ -17,6 +17,7 @@ from plotly.subplots import make_subplots
 
 # noinspection PyUnresolvedReferences
 from models.memory import Memory
+from utils.llm import get_model_name
 
 load_dotenv('../../.env')
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '../../' + os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
@@ -33,7 +34,13 @@ import database.facts as facts_d
 
 uid = 'viUv7GtdoHXbK1UBCDlPuTDuPgJ2'
 
-openai_embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+# Use environment base URL if available
+api_base = os.environ.get('OPENAI_API_BASE', None)
+
+openai_embeddings = OpenAIEmbeddings(
+    model=get_model_name("text-embedding-3-large"),
+    openai_api_base=api_base
+)
 
 
 def query_vectors(query: str, uid: str, k: int = 1000) -> List[str]:

@@ -27,12 +27,54 @@ from models.trend import TrendEnum, ceo_options, company_options, software_produ
 from utils.prompts import extract_facts_prompt, extract_learnings_prompt, extract_facts_text_content_prompt
 from utils.llms.fact import get_prompt_facts
 
-llm_mini = ChatOpenAI(model='gpt-4o-mini')
-llm_mini_stream = ChatOpenAI(model='gpt-4o-mini', streaming=True)
-llm_large = ChatOpenAI(model='o1-preview')
-llm_large_stream = ChatOpenAI(model='o1-preview', streaming=True, temperature=1)
-llm_medium = ChatOpenAI(model='gpt-4o')
-llm_medium_stream = ChatOpenAI(model='gpt-4o', streaming=True)
+# Define model mappings from OpenAI to Ollama models
+OPENAI_TO_OLLAMA_MODELS = {
+    # Map OpenAI models to equivalent Ollama models
+    'gpt-4o-mini': 'llama3',  # Using Llama3 as a substitute for gpt-4o-mini
+    'gpt-4o': 'llama3:8b',    # Using Llama3 8B as a substitute for gpt-4o
+    'o1-preview': 'llama3',   # Using Llama3 as a substitute for o1-preview
+    'text-embedding-3-large': 'nomic-embed-text'  # For embeddings
+}
+
+# Function to get the appropriate model name based on environment
+def get_model_name(openai_model):
+    # If using Ollama (API base is set), map to Ollama model
+    if os.environ.get('OPENAI_API_BASE') and 'ollama' in os.environ.get('OPENAI_API_BASE'):
+        return OPENAI_TO_OLLAMA_MODELS.get(openai_model, 'llama3')  # Default to llama3 if no mapping
+    # Otherwise use the original OpenAI model
+    return openai_model
+
+# Use environment base URL if available, otherwise default to OpenAI
+api_base = os.environ.get('OPENAI_API_BASE', None)
+
+llm_mini = ChatOpenAI(
+    model=get_model_name('gpt-4o-mini'),
+    openai_api_base=api_base
+)
+llm_mini_stream = ChatOpenAI(
+    model=get_model_name('gpt-4o-mini'), 
+    streaming=True,
+    openai_api_base=api_base
+)
+llm_large = ChatOpenAI(
+    model=get_model_name('o1-preview'),
+    openai_api_base=api_base
+)
+llm_large_stream = ChatOpenAI(
+    model=get_model_name('o1-preview'), 
+    streaming=True, 
+    temperature=1,
+    openai_api_base=api_base
+)
+llm_medium = ChatOpenAI(
+    model=get_model_name('gpt-4o'),
+    openai_api_base=api_base
+)
+llm_medium_stream = ChatOpenAI(
+    model=get_model_name('gpt-4o'), 
+    streaming=True,
+    openai_api_base=api_base
+)
 llm_persona_mini_stream = ChatOpenAI(
     temperature=0.8,
     model="google/gemini-flash-1.5-8b",
@@ -49,7 +91,11 @@ llm_persona_medium_stream = ChatOpenAI(
     default_headers={"X-Title": "Omi Chat"},
     streaming=True,
 )
-embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+# Use the appropriate embeddings model
+embeddings = OpenAIEmbeddings(
+    model=get_model_name('text-embedding-3-large'),
+    openai_api_base=api_base
+)
 parser = PydanticOutputParser(pydantic_object=Structured)
 
 encoding = tiktoken.encoding_for_model('gpt-4')
@@ -118,7 +164,10 @@ def get_transcript_structure(transcript: str, started_at: datetime, language_cod
     {format_instructions}'''.replace('    ', '').strip()
 
     prompt = ChatPromptTemplate.from_messages([('system', prompt_text)])
-    chain = prompt | ChatOpenAI(model='gpt-4o') | parser
+    chain = prompt | ChatOpenAI(
+        model=get_model_name('gpt-4o'),
+        openai_api_base=api_base
+    ) | parser
 
     response = chain.invoke({
         'transcript': transcript.strip(),
@@ -197,13 +246,16 @@ def get_email_structure(text: str, started_at: datetime, language_code: str, tz:
     {format_instructions}'''.replace('    ', '').strip()
 
     prompt = ChatPromptTemplate.from_messages([('system', prompt_text)])
-    chain = prompt | ChatOpenAI(model='gpt-4o') | parser
+    chain = prompt | ChatOpenAI(
+        model=get_model_name('gpt-4o'),
+        openai_api_base=api_base
+    ) | parser
 
     response = chain.invoke({
         'language_code': language_code,
         'started_at': started_at.isoformat(),
         'tz': tz,
-        'text': text,
+        'text': text.strip(),
         'format_instructions': parser.get_format_instructions(),
     })
 
@@ -232,7 +284,10 @@ def get_post_structure(text: str, started_at: datetime, language_code: str, tz: 
     {format_instructions}'''.replace('    ', '').strip()
 
     prompt = ChatPromptTemplate.from_messages([('system', prompt_text)])
-    chain = prompt | ChatOpenAI(model='gpt-4o') | parser
+    chain = prompt | ChatOpenAI(
+        model=get_model_name('gpt-4o'),
+        openai_api_base=api_base
+    ) | parser
 
     response = chain.invoke({
         'language_code': language_code,
@@ -1228,7 +1283,10 @@ def qa_rag_v2(uid: str, question: str, context: str, plugin: Optional[Plugin] = 
     Answer:
     """.replace('    ', '').replace('\n\n\n', '\n\n').strip()
     # print('qa_rag prompt', prompt)
-    return ChatOpenAI(model='gpt-4o').invoke(prompt).content
+    return ChatOpenAI(
+        model=get_model_name('gpt-4o'),
+        openai_api_base=api_base
+    ).invoke(prompt).content
 
 
 def qa_rag_v1(uid: str, question: str, context: str, plugin: Optional[Plugin] = None) -> str:
@@ -1266,8 +1324,11 @@ def qa_rag_v1(uid: str, question: str, context: str, plugin: Optional[Plugin] = 
     Answer:
     """.replace('    ', '').replace('\n\n\n', '\n\n').strip()
     # print('qa_rag prompt', prompt)
-    return ChatOpenAI(model='gpt-4o').invoke(prompt).content
 
+    return ChatOpenAI(
+        model=get_model_name('gpt-4o'),
+        openai_api_base=api_base
+    ).invoke(prompt).content
 
 # **************************************************
 # ************* RETRIEVAL (EMOTIONAL) **************

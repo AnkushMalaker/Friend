@@ -5,7 +5,7 @@ from database.redis_db import cache_user_name, get_cached_user_name
 
 
 
-def get_user_from_uid(uid: str):
+def get_user_from_uid(uid: str) -> dict[str, Any]:
     try:
         user = auth.get_user(uid) if uid else None
     except Exception as e:
