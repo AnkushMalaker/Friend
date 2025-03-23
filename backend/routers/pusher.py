@@ -83,18 +83,26 @@ async def _websocket_util_trigger(
 
                 # Audio bytes
                 if header_type == 101:
-                    audiobuffer.extend(data[4:])
-                    trigger_audiobuffer.extend(data[4:])
-                    if has_audio_apps_enabled and len(
-                            trigger_audiobuffer) > sample_rate * audio_bytes_trigger_delay_seconds * 2:
-                        asyncio.run_coroutine_threadsafe(
-                            trigger_realtime_audio_bytes(uid, sample_rate, trigger_audiobuffer.copy()), loop)
-                        trigger_audiobuffer = bytearray()
-                    if audio_bytes_webhook_delay_seconds and len(
-                            audiobuffer) > sample_rate * audio_bytes_webhook_delay_seconds * 2:
-                        asyncio.run_coroutine_threadsafe(
-                            send_audio_bytes_developer_webhook(uid, sample_rate, audiobuffer.copy()), loop)
-                        audiobuffer = bytearray()
+                    # This can be a bit faster to do this way because it doesn't make python skip the first 4 bytes twice which might be expensive?
+                    audio_data = data[4:]
+                    audiobuffer.extend(audio_data)
+                    trigger_audiobuffer.extend(audio_data)
+
+                    if has_audio_apps_enabled:
+                        chunk_size = sample_rate * audio_bytes_trigger_delay_seconds * 2
+                        while len(trigger_audiobuffer) >= chunk_size:
+                            chunk = trigger_audiobuffer[:chunk_size]
+                            asyncio.run_coroutine_threadsafe(
+                                trigger_realtime_audio_bytes(uid, sample_rate, chunk), loop)
+                            trigger_audiobuffer = trigger_audiobuffer[chunk_size:]
+                    
+                    if audio_bytes_webhook_delay_seconds:
+                        chunk_size = sample_rate * audio_bytes_webhook_delay_seconds * 2
+                        while len(audiobuffer) >= chunk_size:
+                            chunk = audiobuffer[:chunk_size]
+                            asyncio.run_coroutine_threadsafe(
+                                send_audio_bytes_developer_webhook(uid, sample_rate, chunk), loop)
+                            audiobuffer = audiobuffer[chunk_size:]
                     continue
 
         except WebSocketDisconnect:
