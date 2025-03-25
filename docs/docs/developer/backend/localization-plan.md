@@ -446,3 +446,208 @@ To migrate data from Pinecone to Qdrant:
 ### Next Steps
 
 After successfully replacing Pinecone with Qdrant, proceed to Phase 3 to implement a local Redis instance as a replacement for Upstash Redis. 
+
+## Phase 3 Implementation: Replacing Upstash Redis with Local Redis
+
+Phase 3 of the localization plan involves replacing the cloud-based Upstash Redis service with a self-hosted Redis instance.
+
+### Implementation Details
+
+1. **Modified Files**:
+   - `backend/database/redis_db.py`: Updated Redis client initialization to use local configurations
+   - `backend/README.md`: Added documentation for Redis setup
+
+2. **Docker Compose Configuration**:
+   The Docker Compose file already includes the Redis service:
+
+   ```yaml
+   # Redis for caching and real-time data
+   redis:
+     image: redis:7
+     ports:
+       - "6379:6379"
+     command: redis-server --requirepass yourpassword
+     volumes:
+       - redis-data:/data
+   ```
+
+3. **Environment Variable Changes**:
+   - Removed:
+     - `UPSTASH_REDIS_REST_URL`
+     - `UPSTASH_REDIS_REST_TOKEN`
+   - Added:
+     - `REDIS_DB_HOST`: The hostname or IP address of the Redis server (default: redis for Docker)
+     - `REDIS_DB_PORT`: The port of the Redis server (default: 6379)
+     - `REDIS_DB_PASSWORD`: The password for Redis authentication
+
+4. **API Compatibility**:
+   - The public API of the Redis client functions remains unchanged
+   - All existing code that uses the Redis client will continue to work without modification
+   - Internal implementation updated to use proper connection handling
+
+5. **Redis Client Initialization Update**:
+   Updated the Redis client initialization in `redis_db.py` to use environment variables with proper defaults:
+
+   ```python
+   # Use default values for environment variables if they're not set
+   redis_host = os.getenv('REDIS_DB_HOST', 'localhost')
+   redis_port = int(os.getenv('REDIS_DB_PORT', '6379'))
+   redis_password = os.getenv('REDIS_DB_PASSWORD', '')
+
+   # Create a Redis client with appropriate configuration
+   r = redis.Redis(
+       host=redis_host,
+       port=redis_port,
+       username='default',
+       password=redis_password,
+       health_check_interval=30,
+       decode_responses=True
+   )
+   ```
+
+6. **Data Migration**:
+   - For migration from Upstash Redis to local Redis, a manual approach is recommended:
+   - Export key-value pairs from Upstash using their CLI or API
+   - Import the data to the local Redis instance using Redis commands
+
+### Testing the Implementation
+
+To test the local Redis implementation:
+
+1. Start the Redis container:
+   ```bash
+   docker-compose up -d redis
+   ```
+
+2. Set environment variables:
+   ```bash
+   export REDIS_DB_HOST=localhost
+   export REDIS_DB_PORT=6379
+   export REDIS_DB_PASSWORD=yourpassword
+   ```
+
+3. Test Redis connectivity:
+   ```bash
+   # Connect to Redis container
+   docker exec -it omi_redis_1 redis-cli -a yourpassword
+   
+   # Run a simple test command
+   PING
+   ```
+
+### Performance Considerations
+
+1. **Latency**: Local Redis offers much lower latency compared to cloud-based Redis
+2. **Persistence**: Redis persistence should be configured to prevent data loss
+3. **Memory Usage**: Monitor Redis memory usage and configure appropriate limits
+
+### Next Steps
+
+After successfully replacing Upstash Redis with a local Redis instance, proceed to Phase 4 to implement a local Typesense instance as a replacement for the cloud Typesense service.
+
+## Phase 4 Implementation: Local Typesense Instance
+
+Phase 4 of the localization plan focuses on replacing the cloud-based Typesense service with a locally hosted Typesense instance for search functionality.
+
+### Implementation Details
+
+1. **Modified Files**:
+   - `backend/utils/search.py`: Updated Typesense client initialization to use local configurations
+   - `backend/README.md`: Added documentation for Typesense setup
+   - Created migration script: `backend/scripts/migration/cloud_to_local_typesense.py`
+
+2. **Docker Compose Configuration**:
+   The Docker Compose file already includes the Typesense service:
+
+   ```yaml
+   # Typesense for search
+   typesense:
+     image: typesense/typesense:0.24.1
+     ports:
+       - "8108:8108"
+     environment:
+       - TYPESENSE_API_KEY=xyz
+       - TYPESENSE_DATA_DIR=/data
+     volumes:
+       - typesense-data:/data
+   ```
+
+3. **Environment Variable Changes**:
+   - Updated:
+     - `TYPESENSE_HOST`: Now points to local instance (default: typesense for Docker)
+     - `TYPESENSE_HOST_PORT`: Port for local instance (default: 8108)
+     - `TYPESENSE_API_KEY`: API key for authentication (should match the one in Docker Compose)
+
+4. **API Compatibility**:
+   - The public API of the Typesense client functions remains unchanged
+   - All existing code that uses Typesense will continue to work without modification
+   - Internal implementation updated to use proper connection handling
+
+5. **Typesense Client Initialization Update**:
+   Updated the Typesense client initialization to use environment variables with proper defaults:
+
+   ```python
+   client = typesense.Client({
+       'api_key': os.getenv('TYPESENSE_API_KEY', 'xyz'),
+       'nodes': [{
+           'host': os.getenv('TYPESENSE_HOST', 'localhost'),
+           'port': os.getenv('TYPESENSE_HOST_PORT', '8108'),
+           'protocol': 'http'
+       }],
+       'connection_timeout_seconds': 10
+   })
+   ```
+
+6. **Data Migration**:
+   - Created a migration script to transfer data from cloud Typesense to local Typesense
+   - The script handles:
+     - Collection schema replication
+     - Document transfer with proper batching
+     - Index configuration preservation
+
+### Migration Process
+
+The migration process from cloud Typesense to local Typesense involves:
+
+1. Exporting collection schemas from cloud Typesense
+2. Creating collections with identical schemas in local Typesense
+3. Exporting documents from each collection in cloud Typesense
+4. Importing documents to corresponding collections in local Typesense
+
+The migration script handles all these steps automatically, with proper error handling and progress reporting.
+
+### Testing the Implementation
+
+To test the local Typesense implementation:
+
+1. Start the Typesense container:
+   ```bash
+   docker-compose up -d typesense
+   ```
+
+2. Set environment variables:
+   ```bash
+   export TYPESENSE_HOST=localhost
+   export TYPESENSE_HOST_PORT=8108
+   export TYPESENSE_API_KEY=xyz
+   ```
+
+3. Test Typesense connectivity:
+   ```bash
+   curl -H "X-TYPESENSE-API-KEY: xyz" http://localhost:8108/health
+   ```
+
+4. Verify collections after migration:
+   ```bash
+   curl -H "X-TYPESENSE-API-KEY: xyz" http://localhost:8108/collections
+   ```
+
+### Performance Considerations
+
+1. **Search Latency**: Local Typesense typically offers lower search latency compared to cloud-based Typesense
+2. **Index Size**: Monitor the size of indices and ensure adequate storage is provisioned
+3. **Memory Requirements**: Typesense is memory-intensive, ensure sufficient memory is allocated
+
+### Next Steps
+
+After successfully replacing cloud Typesense with a local Typesense instance, proceed to Phase 5 to implement a local speech-to-text solution as a replacement for Deepgram. 

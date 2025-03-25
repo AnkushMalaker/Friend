@@ -1,16 +1,25 @@
 import base64
 import json
 import os
-from typing import List, Union
+from typing import List, Union, Optional
 
 import redis
+from redis.typing import ResponseT
 
+# Use default values for environment variables if they're not set
+redis_host = os.getenv('REDIS_DB_HOST', 'localhost')
+redis_port = int(os.getenv('REDIS_DB_PORT', '6379'))
+redis_password = os.getenv('REDIS_DB_PASSWORD', '')
+
+# Create a Redis client that explicitly uses the synchronous client
+# and auto-decodes responses to strings
 r = redis.Redis(
-    host=os.getenv('REDIS_DB_HOST'),
-    port=int(os.getenv('REDIS_DB_PORT')) if os.getenv('REDIS_DB_PORT') is not None else 6379,
+    host=redis_host,
+    port=redis_port,
     username='default',
-    password=os.getenv('REDIS_DB_PASSWORD'),
-    health_check_interval=30
+    password=redis_password,
+    health_check_interval=30,
+    decode_responses=True  # Automatically decode to strings
 )
 
 
@@ -35,12 +44,12 @@ def get_generic_cache(path: str):
 
 
 @try_catch_decorator
-def set_generic_cache(path: str, data: Union[dict, list], ttl: int = None):
+def set_generic_cache(path: str, data: Union[dict, list], ttl: Optional[int] = None):
     key = base64.b64encode(f'{path}'.encode('utf-8'))
     key = key.decode('utf-8')
 
     r.set(f'cache:{key}', json.dumps(data, default=str))
-    if ttl:
+    if ttl is not None:
         r.expire(f'cache:{key}', ttl)
 
 
