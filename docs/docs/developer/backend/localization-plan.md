@@ -356,3 +356,93 @@ Based on our analysis, we've selected the following local alternatives to replac
    - Migrate user data to MongoDB
 3. **File Storage**: Implement file handling and serving logic
 4. **Message Queue**: Set up RabbitMQ for notification delivery 
+
+## Phase 2 Implementation: Replacing Pinecone with Qdrant
+
+Phase 2 of the localization plan has been successfully implemented. Pinecone has been replaced with Qdrant as the vector database for storing memory embeddings.
+
+### Implementation Details
+
+1. **Modified Files**:
+   - `backend/database/vector_db.py`: Replaced Pinecone client with Qdrant client
+   - `backend/README.md`: Added documentation for Qdrant setup
+   - Created migration script: `backend/scripts/migration/pinecone_to_qdrant.py`
+   - Created test script: `backend/scripts/test_qdrant.py`
+
+2. **Docker Compose Configuration**:
+   The Docker Compose file already included the Qdrant service:
+
+   ```yaml
+   # Vector database (Qdrant)
+   vectordb:
+     image: qdrant/qdrant:latest
+     ports:
+       - "6333:6333"
+     volumes:
+       - qdrant-data:/qdrant/storage
+   ```
+
+3. **Environment Variable Changes**:
+   - Removed:
+     - `PINECONE_API_KEY`
+     - `PINECONE_INDEX_NAME`
+   - Added:
+     - `VECTOR_DB_HOST`: The hostname or IP address of the Qdrant server (default: vectordb for Docker)
+     - `VECTOR_DB_PORT`: The port of the Qdrant server (default: 6333)
+     - `COLLECTION_NAME`: The name of the collection (default: omi_memories)
+
+4. **API Compatibility**:
+   - The public API of the vector database functions remains unchanged
+   - All existing code that uses the vector_db module will continue to work
+   - Internal implementation has been completely replaced
+
+5. **Data Migration**:
+   - Created a migration script to transfer data from Pinecone to Qdrant
+   - The script handles:
+     - Paginated vector retrieval from Pinecone
+     - Metadata preservation
+     - Batched uploads to Qdrant
+
+### Testing the Implementation
+
+To test the Qdrant implementation:
+
+1. Start the Qdrant container:
+   ```bash
+   docker-compose up -d vectordb
+   ```
+
+2. Set environment variables:
+   ```bash
+   export VECTOR_DB_HOST=localhost
+   export VECTOR_DB_PORT=6333
+   ```
+
+3. Run the test script:
+   ```bash
+   python backend/scripts/test_qdrant.py
+   ```
+
+### Migrating Existing Data
+
+To migrate data from Pinecone to Qdrant:
+
+1. Ensure both Pinecone and Qdrant credentials are available in environment variables
+2. Run the migration script:
+   ```bash
+   python backend/scripts/migration/pinecone_to_qdrant.py
+   ```
+
+3. Verify data migration:
+   ```bash
+   # Connect to Qdrant container
+   docker exec -it omi_vectordb_1 bash
+   
+   # Use Qdrant CLI tools to verify data
+   qdrant collections list
+   qdrant collections info omi_memories
+   ```
+
+### Next Steps
+
+After successfully replacing Pinecone with Qdrant, proceed to Phase 3 to implement a local Redis instance as a replacement for Upstash Redis. 

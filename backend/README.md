@@ -127,3 +127,7 @@ Omi can be configured to use Ollama as a local alternative to OpenAI. See the [O
 - [Full Backend Setup Documentation](https://docs.omi.me/developer/backend/Backend_Setup)
 - [Omi Documentation](https://docs.omi.me/)
 - [Community Support](https://discord.gg/omi)
+
+
+uv venv --no-project .backend-venv -p 3.12
+uv pip install -r backend/requirements.txt
