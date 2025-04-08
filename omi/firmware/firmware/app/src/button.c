@@ -155,13 +155,15 @@ static inline void notify_long_tap()
 
 #define TAP_THRESHOLD      300  // 300 ms for single tap
 #define DOUBLE_TAP_WINDOW  600  // 600 ms maximum for double-tap
-#define LONG_PRESS_TIME    1000 // 1000 ms for long press
+#define PAIRING_PRESS_TIME 3000 // 3000 ms for pairing mode
+#define SHUTDOWN_PRESS_TIME 5000 // 5000 ms for shutdown
 
 typedef enum {
     BUTTON_EVENT_NONE,
     BUTTON_EVENT_SINGLE_TAP,
     BUTTON_EVENT_DOUBLE_TAP,
-    BUTTON_EVENT_LONG_PRESS,
+    BUTTON_EVENT_PAIRING_PRESS,
+    BUTTON_EVENT_SHUTDOWN_PRESS,
     BUTTON_EVENT_RELEASE
 } ButtonEvent;
 
@@ -198,70 +200,62 @@ void check_button_level(struct k_work *work_item)
             } else {
                 btn_last_tap_time = current_time;
             }
+        } else if (press_duration >= SHUTDOWN_PRESS_TIME) {
+            event = BUTTON_EVENT_SHUTDOWN_PRESS;
+        } else if (press_duration >= PAIRING_PRESS_TIME) {
+            event = BUTTON_EVENT_PAIRING_PRESS;
+            // Handle pairing mode activation
+            enter_pairing_mode();
         }
-    } 
-
-    // Check for single tap
-    if (btn_state == BUTTON_RELEASED && !btn_is_pressed) {
-        uint32_t press_duration = (btn_release_time - btn_press_start_time)*BUTTON_CHECK_INTERVAL;
-        if (press_duration < TAP_THRESHOLD && btn_last_tap_time > 0 && (current_time - btn_press_start_time)*BUTTON_CHECK_INTERVAL > TAP_THRESHOLD) {
-            event = BUTTON_EVENT_SINGLE_TAP;
-            btn_last_tap_time = 0;
-        } else if ((current_time - btn_press_start_time)*BUTTON_CHECK_INTERVAL > TAP_THRESHOLD) {
-            event = BUTTON_EVENT_RELEASE;
+        
+        event = BUTTON_EVENT_RELEASE;
+    } else if (btn_is_pressed) {
+        // Check for long press while button is still held down
+        uint32_t current_press_duration = (current_time - btn_press_start_time)*BUTTON_CHECK_INTERVAL;
+        if (current_press_duration >= SHUTDOWN_PRESS_TIME && btn_last_event != BUTTON_EVENT_SHUTDOWN_PRESS) {
+            event = BUTTON_EVENT_SHUTDOWN_PRESS;
+            // Handle shutdown
+            is_off = true;
+            bt_off();
+            turnoff_all();
+        } else if (current_press_duration >= PAIRING_PRESS_TIME && btn_last_event != BUTTON_EVENT_PAIRING_PRESS) {
+            event = BUTTON_EVENT_PAIRING_PRESS;
+            // Handle pairing mode activation
+            enter_pairing_mode();
         }
     }
-
-    // Check for long press
-    if (btn_is_pressed && (current_time - btn_press_start_time)*BUTTON_CHECK_INTERVAL >= LONG_PRESS_TIME) {
-        event = BUTTON_EVENT_LONG_PRESS;
-    }
-
-    // Single tap
-    if (event == BUTTON_EVENT_SINGLE_TAP)
-    {
-        LOG_PRINTK("single tap detected\n");
+    
+    // Handle detected event
+    if (event != BUTTON_EVENT_NONE) {
         btn_last_event = event;
-        notify_tap();
-
-        // Enter the low power mode
-        is_off = true;
-        bt_off();
-        turnoff_all();
-    }
-
-    // Double tap
-    if (event == BUTTON_EVENT_DOUBLE_TAP)
-    {
-        LOG_PRINTK("double tap detected\n");
-        btn_last_event = event;
-        notify_double_tap();
-    }
-
-    // Long press, one time event
-    if (event == BUTTON_EVENT_LONG_PRESS && btn_last_event != BUTTON_EVENT_LONG_PRESS)
-    {
-        LOG_PRINTK("long press detected\n");
-        btn_last_event = event;
-        notify_long_tap();
-    }
-
-    // Releases, one time event
-    if (event == BUTTON_EVENT_RELEASE && btn_last_event != BUTTON_EVENT_RELEASE)
-    {
-        LOG_PRINTK("release detected\n");
-        btn_last_event = event;
-        notify_unpress();
-
-        // Reset
-        current_time = 0;
-        btn_press_start_time = 0;
-        btn_release_time = 0;
-        btn_last_tap_time = 0;
-    }
-    if (event == BUTTON_EVENT_RELEASE)
-    {
-        current_button_state = GRACE;
+        
+        switch (event) {
+            case BUTTON_EVENT_SINGLE_TAP:
+                notify_tap();
+                break;
+            case BUTTON_EVENT_DOUBLE_TAP:
+                notify_double_tap();
+                break;
+            case BUTTON_EVENT_PAIRING_PRESS:
+                notify_long_tap();
+                break;
+            case BUTTON_EVENT_SHUTDOWN_PRESS:
+                LOG_PRINTK("shutdown detected\n");
+                is_off = true;
+                bt_off();
+                turnoff_all();
+                break;
+            case BUTTON_EVENT_RELEASE:
+                // Only handle single tap release after ensuring it's not part of a double tap
+                if (btn_last_tap_time > 0 && (current_time - btn_last_tap_time)*BUTTON_CHECK_INTERVAL >= DOUBLE_TAP_WINDOW) {
+                    notify_tap();
+                    btn_last_tap_time = 0;
+                }
+                notify_unpress();
+                break;
+            default:
+                break;
+        }
     }
 
     k_work_reschedule(&button_work, K_MSEC(BUTTON_CHECK_INTERVAL));

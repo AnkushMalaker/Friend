@@ -24,6 +24,9 @@ int broadcast_audio_packets(uint8_t *buffer, size_t size);
 struct bt_conn *get_current_connection();
 int bt_on();
 int bt_off();
-
+void enter_pairing_mode(void);
+void start_advertising(void);
+void stop_advertising(void);
+void start_directed_advertising(void);
 void accel_off();
 #endif

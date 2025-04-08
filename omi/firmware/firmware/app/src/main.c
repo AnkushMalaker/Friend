@@ -73,10 +73,17 @@ static void boot_led_sequence(void)
     set_led_blue(false);
 }
 
+// External reference to is_in_pairing_mode from transport.c
+extern bool is_in_pairing_mode;
+
 void set_led_state()
 {
+    // Skip normal LED state if device is in pairing mode
+    if (is_in_pairing_mode) {
+        return;
+    }
+    
     // Recording and connected state - BLUE
-
     if(usb_charge)
     {
         is_charging = !is_charging;

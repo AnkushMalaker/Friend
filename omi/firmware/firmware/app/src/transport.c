@@ -1,5 +1,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/l2cap.h>
@@ -10,6 +11,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/ring_buffer.h>
+#include <zephyr/settings/settings.h>
 #include "transport.h"
 #include "config.h"
 #include "utils.h"
@@ -30,7 +32,22 @@ extern uint8_t file_count;
 extern uint32_t file_num_array[2];
 struct bt_conn *current_connection = NULL;
 uint16_t current_mtu = 0;
-uint16_t current_package_index = 0; 
+uint16_t current_package_index = 0;
+
+// Pairing mode work item forward declarations
+static void pairing_led_blink_handler(struct k_work *work);
+static void exit_pairing_mode_work_handler(struct k_work *work);
+
+// Define work items
+K_WORK_DELAYABLE_DEFINE(pairing_led_blink_work, pairing_led_blink_handler);
+K_WORK_DELAYABLE_DEFINE(exit_pairing_mode_work, exit_pairing_mode_work_handler);
+
+// Flag to track if device is in pairing mode
+bool is_in_pairing_mode = false;
+
+// Variable to track if device has been previously bonded
+static bool has_bonded_devices = false;
+
 //
 // Internal
 //
@@ -61,14 +78,108 @@ static struct bt_uuid_128 audio_characteristic_data_uuid = BT_UUID_INIT_128(BT_U
 static struct bt_uuid_128 audio_characteristic_format_uuid = BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x19B10002, 0xE8F2, 0x537E, 0x4F6C, 0xD104768A1214));
 static struct bt_uuid_128 audio_characteristic_speaker_uuid = BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x19B10003, 0xE8F2, 0x537E, 0x4F6C, 0xD104768A1214));
 
+// Pairing and security callbacks (Restored separate definitions)
+static void auth_cancel(struct bt_conn *conn)
+{
+    LOG_INF("Pairing cancelled");
+    // Optionally handle pairing cancellation state if needed
+    // Reset pairing mode if cancellation happens during the process
+    if (is_in_pairing_mode) {
+        LOG_INF("Exiting pairing mode due to cancellation");
+        is_in_pairing_mode = false;
+        k_work_cancel_delayable(&pairing_led_blink_work);
+        k_work_cancel_delayable(&exit_pairing_mode_work); // Cancel timeout too
+        stop_advertising();
+        set_led_green(false);
+        set_led_state();
+    }
+}
+
+static void auth_pairing_confirm(struct bt_conn *conn)
+{
+    // Auto-confirm any pairing request (primarily for Just Works)
+    int err = bt_conn_auth_pairing_confirm(conn);
+    if (err) {
+        LOG_ERR("Pairing confirm failed (err %d)", err);
+    } else {
+        LOG_INF("Pairing confirmed automatically (Just Works)");
+    }
+}
+
+// Keep passkey handlers commented out or minimal, as they shouldn't be needed
+// static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey) { ... }
+// static void auth_passkey_confirm(struct bt_conn *conn, unsigned int passkey) { ... }
+
+static void auth_pairing_complete(struct bt_conn *conn, bool bonded)
+{
+    LOG_INF("Pairing complete, bonded: %d", bonded);
+    has_bonded_devices = bonded; // Update bonding status
+
+    // Exit pairing mode state if we were in it
+    if (is_in_pairing_mode) {
+         LOG_INF("Exiting pairing mode state after successful pairing.");
+        is_in_pairing_mode = false;
+        k_work_cancel_delayable(&pairing_led_blink_work);
+        k_work_cancel_delayable(&exit_pairing_mode_work); // Ensure timeout doesn't trigger later
+        set_led_green(false); // Turn off blinking green
+        // Advertising might have already stopped in _transport_connected,
+        // but ensure it's stopped if the connection happened very quickly.
+        stop_advertising();
+    }
+    set_led_state();
+}
+
+static void auth_pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
+{
+    LOG_ERR("Pairing failed, reason: %u", reason);
+
+    // Exit pairing mode state if pairing failed while in pairing mode
+    if (is_in_pairing_mode) {
+        LOG_INF("Exiting pairing mode state after failed pairing.");
+        is_in_pairing_mode = false;
+        k_work_cancel_delayable(&pairing_led_blink_work);
+         k_work_cancel_delayable(&exit_pairing_mode_work); // Ensure timeout doesn't trigger later
+        set_led_green(false); // Turn off blinking green
+        // Advertising might still be running if connection failed quickly, stop it.
+        stop_advertising();
+    }
+    set_led_state();
+
+    // It's often good practice to disconnect on pairing failure
+    // Using linter suggested error code
+    bt_conn_disconnect(conn, BT_ATT_ERR_AUTHENTICATION); // <<< CORRECTED ERROR CODE
+}
+
+// Restore original separate callback structures
+static struct bt_conn_auth_cb auth_callbacks = {
+    .cancel = auth_cancel,
+    .pairing_confirm = auth_pairing_confirm,
+    // No passkey handlers needed for NO_INPUT_OUTPUT
+    // .passkey_display = auth_passkey_display, 
+    // .passkey_entry = auth_passkey_entry,
+    // .passkey_confirm = auth_passkey_confirm,
+};
+
+static struct bt_conn_auth_info_cb auth_info_callbacks = {
+    .pairing_complete = auth_pairing_complete,
+    .pairing_failed = auth_pairing_failed
+};
+
+//
+// Service and Characteristic
+//
+
 static struct bt_gatt_attr audio_service_attr[] = {
     BT_GATT_PRIMARY_SERVICE(&audio_service_uuid),
-    BT_GATT_CHARACTERISTIC(&audio_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, audio_data_read_characteristic, NULL, NULL),
-    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-    BT_GATT_CHARACTERISTIC(&audio_characteristic_format_uuid.uuid, BT_GATT_CHRC_READ, BT_GATT_PERM_READ, audio_codec_read_characteristic, NULL, NULL),
+    BT_GATT_CHARACTERISTIC(&audio_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, 
+                           BT_GATT_PERM_READ_AUTHEN, audio_data_read_characteristic, NULL, NULL),
+    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+    BT_GATT_CHARACTERISTIC(&audio_characteristic_format_uuid.uuid, BT_GATT_CHRC_READ, 
+                           BT_GATT_PERM_READ_AUTHEN, audio_codec_read_characteristic, NULL, NULL),
 #ifdef CONFIG_ENABLE_SPEAKER
-    BT_GATT_CHARACTERISTIC(&audio_characteristic_speaker_uuid.uuid, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_WRITE, NULL, audio_data_write_handler, NULL),
-    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE), //
+    BT_GATT_CHARACTERISTIC(&audio_characteristic_speaker_uuid.uuid, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY, 
+                           BT_GATT_PERM_WRITE_AUTHEN, NULL, audio_data_write_handler, NULL),
+    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN), //
 #endif
     
 };
@@ -83,8 +194,9 @@ static struct bt_uuid_128 dfu_control_point_uuid = BT_UUID_INIT_128(BT_UUID_128_
 
 static struct bt_gatt_attr dfu_service_attr[] = {
     BT_GATT_PRIMARY_SERVICE(&dfu_service_uuid),
-    BT_GATT_CHARACTERISTIC(&dfu_control_point_uuid.uuid, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_WRITE, NULL, dfu_control_point_write_handler, NULL),
-    BT_GATT_CCC(dfu_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    BT_GATT_CHARACTERISTIC(&dfu_control_point_uuid.uuid, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY, 
+                          BT_GATT_PERM_WRITE_AUTHEN, NULL, dfu_control_point_write_handler, NULL),
+    BT_GATT_CCC(dfu_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
 };
 
 static struct bt_gatt_service dfu_service = BT_GATT_SERVICE(dfu_service_attr);
@@ -102,8 +214,9 @@ static ssize_t accel_data_read_characteristic(struct bt_conn *conn, const struct
 
 static struct bt_gatt_attr accel_service_attr[] = {
     BT_GATT_PRIMARY_SERVICE(&accel_uuid),//primary description
-    BT_GATT_CHARACTERISTIC(&accel_uuid_x.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, accel_data_read_characteristic, NULL, NULL),//data type
-    BT_GATT_CCC(accel_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),//scheduler
+    BT_GATT_CHARACTERISTIC(&accel_uuid_x.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, 
+                          BT_GATT_PERM_READ_AUTHEN, accel_data_read_characteristic, NULL, NULL),//data type
+    BT_GATT_CCC(accel_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),//scheduler
 };
 static struct bt_gatt_service accel_service = BT_GATT_SERVICE(accel_service_attr);
 
@@ -351,34 +464,40 @@ void broadcast_battery_level(struct k_work *work_item) {
 static void _transport_connected(struct bt_conn *conn, uint8_t err)
 {
     struct bt_conn_info info = {0};
-    storage_is_on = true;
-
     err = bt_conn_get_info(conn, &info);
     if (err)
     {
         LOG_ERR("Failed to get connection info (err %d)", err);
         return;
     }
+    current_connection = conn;
 
-    LOG_INF("bluetooth activated");
-
-    current_connection = bt_conn_ref(conn);
-    current_mtu = info.le.data_len->tx_max_len;
-    LOG_INF("Transport connected");
-    LOG_DBG("Interval: %d, latency: %d, timeout: %d", info.le.interval, info.le.latency, info.le.timeout);
-    LOG_DBG("TX PHY %s, RX PHY %s", phy2str(info.le.phy->tx_phy), phy2str(info.le.phy->rx_phy));
-    LOG_DBG("LE data len updated: TX (len: %d time: %d) RX (len: %d time: %d)", info.le.data_len->tx_max_len, info.le.data_len->tx_max_time, info.le.data_len->rx_max_len, info.le.data_len->rx_max_time);
-
-    k_work_schedule(&battery_work, K_MSEC(100)); // run immediately
-
+    LOG_INF("Connected");
     is_connected = true;
 
-    // // Put NFC to sleep when Bluetooth is connected
-    // nfc_sleep();
-// #ifdef CONFIG_ACCELEROMETER
-//      k_work_schedule(&accel_work, K_MSEC(ACCEL_REFRESH_INTERVAL));
-// #endif
+    // Add logging for initial security level
+    LOG_INF("Initial security level: %d", info.security.level);
 
+    // Request security level 2 (Medium: Unauthenticated pairing with encryption)
+    // This will trigger the pairing process if not already bonded/secure.
+    err = bt_conn_set_security(conn, BT_SECURITY_L2);
+    if (err) {
+        LOG_ERR("Failed to set security level (err %d)", err);
+    } else {
+        LOG_INF("Requested security level 2");
+    }
+
+    set_led_state();
+    // friend_notify(FRIEND_EVENT_CONNECT);
+
+#ifdef CONFIG_ENABLE_SPEAKER
+    speaker_notify_connection_status(true);
+#endif // CONFIG_ENABLE_SPEAKER
+
+    // k_work_submit(&storage_work_item);
+
+    // Stop advertising since we are connected
+    stop_advertising();
 }
 
 static void _transport_disconnected(struct bt_conn *conn, uint8_t err)
@@ -737,11 +856,7 @@ extern struct bt_gatt_service storage_service;
 int bt_off()
 {
    bt_disable();
-   int err = bt_le_adv_stop();
-   if (err)
-   {
-       LOG_PRINTK("Failed to stop Bluetooth %d\n",err);
-   }
+   stop_advertising();
    k_mutex_lock(&write_sdcard_mutex, K_FOREVER);
    sd_off();
    k_mutex_unlock(&write_sdcard_mutex);
@@ -754,7 +869,7 @@ int bt_off()
 int bt_on()
 {
    int err = bt_enable(NULL);
-   bt_le_adv_start(BT_LE_ADV_CONN, bt_ad, ARRAY_SIZE(bt_ad), bt_sd, ARRAY_SIZE(bt_sd));
+   start_advertising();
    bt_gatt_service_register(&storage_service);
    sd_on();
    mic_on();
@@ -762,21 +877,114 @@ int bt_on()
    return 0;
 }
 
+// Function to check if there are bonded devices
+static bool check_for_bonded_devices(void)
+{
+    // For now, since we can't reliably check bonded devices without
+    // bt_keys_get_addr which isn't properly exposed, we'll assume
+    // there are no bonded devices at startup
+    LOG_INF("Assuming no bonded devices at startup");
+    return false;
+}
+
+// Function to start non-discoverable advertising (only connectable by bonded devices)
+void start_directed_advertising(void)
+{
+    // Only advertise to bonded devices, not discoverable by all
+    int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, bt_ad, ARRAY_SIZE(bt_ad), bt_sd, ARRAY_SIZE(bt_sd));
+    if (err) {
+        LOG_ERR("Directed advertising failed to start (err %d)", err);
+    } else {
+        LOG_INF("Directed advertising successfully started (only for bonded devices)");
+    }
+}
+
+// Function to start advertising (discoverable)
+void start_advertising(void)
+{
+    LOG_INF("Attempting to start advertising...");
+    int err = bt_le_adv_start(BT_LE_ADV_CONN, bt_ad, ARRAY_SIZE(bt_ad), bt_sd, ARRAY_SIZE(bt_sd));
+    if (err) {
+        LOG_ERR("Transport advertising failed to start (err %d)", err);
+    } else {
+        LOG_INF("Advertising successfully started");
+    }
+}
+
+// Function to stop advertising
+void stop_advertising(void)
+{
+    LOG_INF("Attempting to stop advertising...");
+    int err = bt_le_adv_stop();
+    if (err)
+    {
+        LOG_ERR("Failed to stop advertising (err %d)", err);
+    } else {
+        LOG_INF("Advertising stopped successfully.");
+    }
+}
+
 //periodic advertising
 int transport_start()
 {
+    int err; // Declare err here
     k_mutex_init(&write_sdcard_mutex);
-    // Configure callbacks
+    // Configure connection callbacks
     bt_conn_cb_register(&_callback_references);
 
+    // Clear any existing auth callback pointers before registering ours
+    bt_conn_auth_cb_register(NULL);
+    bt_conn_auth_info_cb_register(NULL);
+
+    // Configure pairing and security callbacks (Restored original method)
+    err = bt_conn_auth_cb_register(&auth_callbacks);
+    if (err) {
+        LOG_ERR("Failed to register auth callbacks (err %d)", err);
+    }
+
+    err = bt_conn_auth_info_cb_register(&auth_info_callbacks);
+    if (err) {
+        LOG_ERR("Failed to register auth info callbacks (err %d)", err);
+    }
+
     // Enable Bluetooth
-    int err = bt_enable(NULL);
+    err = bt_enable(NULL); 
     if (err)
     {
         LOG_ERR("Transport bluetooth init failed (err %d)", err);
         return err;
     }
     LOG_INF("Transport bluetooth initialized");
+
+    // Clear all existing bonding information on boot
+    int unpair_err = bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
+    if (unpair_err) {
+        LOG_ERR("Failed to clear bonding information (err %d)", unpair_err);
+    } else {
+        LOG_INF("Cleared existing bonding information.");
+    }
+
+    // Initialize settings for bonding storage
+    err = settings_subsys_init();
+    if (err) {
+        LOG_ERR("Failed to initialize settings subsystem (err %d)", err);
+    } else {
+        LOG_INF("Settings subsystem initialized");
+    }
+
+    // Load stored bond information
+    err = settings_load();
+    if (err) {
+        LOG_ERR("Failed to load bonding information (err %d)", err);
+    } else {
+        LOG_INF("Bonding information loaded");
+    }
+
+    // Check if there are any previously bonded devices
+    // TODO: Implement a reliable check for bonded devices if needed.
+    // For now, we assume none at startup for initial pairing flow.
+    has_bonded_devices = check_for_bonded_devices();
+
     //  Enable accelerometer
 #ifdef CONFIG_ACCELEROMETER
     err = accel_start();
@@ -809,21 +1017,19 @@ int transport_start()
 
 
 #endif
-    // Start advertising
-
+    // Register services
     memset(storage_temp_data, 0, OPUS_PADDED_LENGTH * 4);
     bt_gatt_service_register(&storage_service);
     bt_gatt_service_register(&audio_service);
     bt_gatt_service_register(&dfu_service);
-    err = bt_le_adv_start(BT_LE_ADV_CONN, bt_ad, ARRAY_SIZE(bt_ad), bt_sd, ARRAY_SIZE(bt_sd));
-    if (err)
-    {
-        LOG_ERR("Transport advertising failed to start (err %d)", err);
-        return err;
-    }
-    else
-    {
-        LOG_INF("Advertising successfully started");
+    
+    // If we have bonded devices, start directed advertising (only to bonded devices)
+    if (has_bonded_devices) {
+        LOG_INF("Starting directed advertising to connect with bonded devices");
+        start_directed_advertising();
+    } else {
+        // DO NOT start advertising at boot - only when entering pairing mode
+        LOG_INF("Device is NOT discoverable until pairing mode is entered");
     }
 
     int battErr = 0;
@@ -842,8 +1048,8 @@ int transport_start()
 
     // Start pusher
     ring_buf_init(&ring_buf, sizeof(tx_queue), tx_queue);
-    k_thread_create(&pusher_thread, pusher_stack, K_THREAD_STACK_SIZEOF(pusher_stack), (k_thread_entry_t)pusher, NULL, NULL, NULL, K_PRIO_PREEMPT(7), 0, K_NO_WAIT);
-
+    k_thread_create(&pusher_thread, pusher_stack, K_THREAD_STACK_SIZEOF(pusher_stack), pusher, NULL, NULL, NULL, K_PRIO_PREEMPT(7), 0, K_NO_WAIT);
+    
     return 0;
 }
 
@@ -865,4 +1071,76 @@ int broadcast_audio_packets(uint8_t *buffer, size_t size)
 void accel_off()
 {
     gpio_pin_set_dt(&accel_gpio_pin, 0);
+}
+
+// Re-added missing work handler definitions
+
+// Work handler for blinking green LED during pairing
+static void pairing_led_blink_handler(struct k_work *work)
+{
+    static bool led_state = false;
+
+    if (is_in_pairing_mode) {
+        // Toggle LED state
+        led_state = !led_state;
+        set_led_green(led_state);
+
+        // Schedule next blink
+        k_work_reschedule(&pairing_led_blink_work, K_MSEC(500));
+    } else {
+        // Ensure LED is off when exiting pairing mode
+        set_led_green(false);
+    }
+}
+
+// Work item to exit pairing mode after timeout
+static void exit_pairing_mode_work_handler(struct k_work *work)
+{
+    if (is_in_pairing_mode) {
+        LOG_INF("Exiting pairing mode (timeout)");
+        is_in_pairing_mode = false;
+
+        // Stop LED blinking
+        k_work_cancel_delayable(&pairing_led_blink_work);
+
+        // Stop advertising (device no longer discoverable)
+        stop_advertising();
+
+        // Restore normal LED state
+        set_led_green(false);
+        set_led_state();
+    }
+}
+
+// Function to enter pairing mode, called on button long press
+// (Ensure this function still exists and is called correctly from button handler)
+void enter_pairing_mode(void)
+{
+    if (is_in_pairing_mode) {
+        LOG_INF("Already in pairing mode");
+        return;
+    }
+
+    LOG_INF("Entering pairing mode (3-second hold)");
+    is_in_pairing_mode = true;
+
+    // Turn off other LEDs first
+    set_led_red(false);
+    set_led_blue(false);
+
+    // Start blinking green LED to indicate pairing mode
+    k_work_reschedule(&pairing_led_blink_work, K_NO_WAIT);
+
+    // Disconnect current connection to allow new pairing if connected
+    if (current_connection) {
+        // Disconnect current connection to allow new pairing
+        bt_conn_disconnect(current_connection, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+    }
+
+    // Start advertising to make device discoverable
+    stop_advertising(); // Stop any existing advertising
+    start_advertising(); // Start fresh advertising session
+
+    // Ensure device is in pairing mode for 60 seconds
+    k_work_reschedule(&exit_pairing_mode_work, K_SECONDS(60));
 }
