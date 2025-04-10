@@ -172,14 +172,14 @@ static struct bt_conn_auth_info_cb auth_info_callbacks = {
 static struct bt_gatt_attr audio_service_attr[] = {
     BT_GATT_PRIMARY_SERVICE(&audio_service_uuid),
     BT_GATT_CHARACTERISTIC(&audio_characteristic_data_uuid.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, 
-                           BT_GATT_PERM_READ_AUTHEN, audio_data_read_characteristic, NULL, NULL),
-    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+                           BT_GATT_PERM_READ, audio_data_read_characteristic, NULL, NULL),
+    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     BT_GATT_CHARACTERISTIC(&audio_characteristic_format_uuid.uuid, BT_GATT_CHRC_READ, 
-                           BT_GATT_PERM_READ_AUTHEN, audio_codec_read_characteristic, NULL, NULL),
+                           BT_GATT_PERM_READ, audio_codec_read_characteristic, NULL, NULL),
 #ifdef CONFIG_ENABLE_SPEAKER
     BT_GATT_CHARACTERISTIC(&audio_characteristic_speaker_uuid.uuid, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY, 
-                           BT_GATT_PERM_WRITE_AUTHEN, NULL, audio_data_write_handler, NULL),
-    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN), //
+                           BT_GATT_PERM_WRITE, NULL, audio_data_write_handler, NULL),
+    BT_GATT_CCC(audio_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE), //
 #endif
     
 };
@@ -195,8 +195,8 @@ static struct bt_uuid_128 dfu_control_point_uuid = BT_UUID_INIT_128(BT_UUID_128_
 static struct bt_gatt_attr dfu_service_attr[] = {
     BT_GATT_PRIMARY_SERVICE(&dfu_service_uuid),
     BT_GATT_CHARACTERISTIC(&dfu_control_point_uuid.uuid, BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY, 
-                          BT_GATT_PERM_WRITE_AUTHEN, NULL, dfu_control_point_write_handler, NULL),
-    BT_GATT_CCC(dfu_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+                          BT_GATT_PERM_WRITE, NULL, dfu_control_point_write_handler, NULL),
+    BT_GATT_CCC(dfu_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 };
 
 static struct bt_gatt_service dfu_service = BT_GATT_SERVICE(dfu_service_attr);
@@ -215,8 +215,8 @@ static ssize_t accel_data_read_characteristic(struct bt_conn *conn, const struct
 static struct bt_gatt_attr accel_service_attr[] = {
     BT_GATT_PRIMARY_SERVICE(&accel_uuid),//primary description
     BT_GATT_CHARACTERISTIC(&accel_uuid_x.uuid, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, 
-                          BT_GATT_PERM_READ_AUTHEN, accel_data_read_characteristic, NULL, NULL),//data type
-    BT_GATT_CCC(accel_ccc_config_changed_handler, BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),//scheduler
+                          BT_GATT_PERM_READ, accel_data_read_characteristic, NULL, NULL),//data type
+    BT_GATT_CCC(accel_ccc_config_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),//scheduler
 };
 static struct bt_gatt_service accel_service = BT_GATT_SERVICE(accel_service_attr);
 
@@ -1130,6 +1130,12 @@ void enter_pairing_mode(void)
 
     // Start blinking green LED to indicate pairing mode
     k_work_reschedule(&pairing_led_blink_work, K_NO_WAIT);
+
+    // Vibrate to indicate pairing mode is active
+    play_haptic_milli(50);
+    // sleep 50ms
+    k_sleep(K_MSEC(50));
+    play_haptic_milli(50);
 
     // Disconnect current connection to allow new pairing if connected
     if (current_connection) {
