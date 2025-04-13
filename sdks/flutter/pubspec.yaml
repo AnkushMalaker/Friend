@@ -1,0 +1,27 @@
+name: omi_flutter
+description: Flutter SDK for Omi devices
+version: 1.0.0
+homepage: https://github.com/BasedHardware/omi
+
+environment:
+  sdk: ">=2.12.0 <4.0.0"
+  flutter: ">=2.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_blue_plus: ^1.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.omi.flutter
+        pluginClass: OmiFlutterPlugin
+      ios:
+        pluginClass: OmiFlutterPlugin 
