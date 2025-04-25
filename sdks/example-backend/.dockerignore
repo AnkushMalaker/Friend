@@ -1,0 +1,20 @@
+# Ignore Python virtual environment
+.venv
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore build artifacts
+build/
+dist/
+*.egg-info/
+
+# Ignore IDE/editor directories
+.vscode/
+.idea/
+
+# Ignore Git directory
+.git/ 

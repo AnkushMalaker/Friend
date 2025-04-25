@@ -10,10 +10,31 @@ services:
     environment:
       - WHISPER_HOST=whisper
       - WHISPER_PORT=10300
-    networks:
-      - whisper-network
 
-networks:
-  whisper-network:
-    external: true
-    name: my-services_default
+  whisper:
+    image: ankushm8/wyoming-faster-whisper:gpu
+    command: [
+      "uv", "run", "wyoming-faster-whisper",
+      "--model", "large-v3",
+      "--uri", "tcp://0.0.0.0:10300",
+      "--data-dir", "/data",
+      "--beam-size", "5",
+      "--language", "en",
+      "--device", "cuda",
+      "--debug"
+    ]
+    volumes:
+      - ./whisper-data:/data
+    environment:
+      - TZ=Asia/Kolkata
+      - local_files_only=False
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    ports:
+      - 10300:10300

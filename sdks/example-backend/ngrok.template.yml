@@ -1,0 +1,12 @@
+version: "3"
+tunnels:
+    backend: # FastAPI on :8000, fixed URL
+        proto: http
+        addr: 8000
+        domain: <reserved domain you already own> 
+    wyoming: # Faster‑Whisper Wyoming on :10300
+        proto: tcp
+        addr: 10300 # gets a random tcp://<host>:<port> each time
+agent:
+    authtoken: <ngrok auth token> 
+

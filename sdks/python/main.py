@@ -11,6 +11,9 @@ from omi.decoder import OmiOpusDecoder
 from omi.transcribe import transcribe, transcribe_wyoming
 from websockets.client import connect as websocket_connect
 from websockets.exceptions import ConnectionClosed
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -107,7 +110,7 @@ def main():
     async def run():
         await asyncio.gather(
             listen_to_omi(OMI_MAC, OMI_CHAR_UUID, handle_ble_data),
-            # transcribe(audio_queue, "a9bab333cbc53de93ecc5371726e6f9e8a95c51e"),
+            # transcribe(audio_queue, os.getenv("DEEPGRAM_API_KEY")),
             # transcribe_wyoming(audio_queue, "tcp://192.168.0.110:10300"),
             # transcribe_wyoming(audio_queue, "tcp://0.tcp.in.ngrok.io:13156"),
             send_to_stt_backend(audio_queue, "ws://192.168.0.110:8585"),
