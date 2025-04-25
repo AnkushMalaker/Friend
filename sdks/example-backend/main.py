@@ -67,7 +67,7 @@ def decode_omi_packet(data: bytes, decoder: OpusDecoder) -> Optional[np.ndarray]
         pcm = decoder.decode(data, FRAME_SIZE, decode_fec=False)
         return np.frombuffer(pcm, dtype=np.int16)  # Ensure we return an ndarray to fix type error
     except Exception as e:
-        print(f"Opus decode error: {e}")
+        logger.error(f"Opus decode error: {e}")
         return None
 
 def save_wav_file(pcm_data: np.ndarray, filename: str) -> None:
@@ -78,9 +78,9 @@ def save_wav_file(pcm_data: np.ndarray, filename: str) -> None:
             wf.setsampwidth(2)  # 2 bytes per sample (16-bit)
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes(pcm_data.tobytes())
-        print(f"Saved audio to {filename}")
+        logger.info(f"Saved final decoded audio to {filename}")
     except Exception as e:
-        print(f"Error saving audio: {e}")
+        logger.error(f"Error saving audio: {e}")
 
 class ConnectionManager:
     def __init__(self):
@@ -115,7 +115,6 @@ async def websocket_endpoint(websocket: WebSocket):
     # Generate a unique base filename for this session
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_filename = f"audio_files/client_{client_id}_{timestamp}"
-    raw_filename = f"{base_filename}_opus_raw.opus"
     decoded_filename = f"{base_filename}_final.wav"
     packet_log_filename = f"{base_filename}_packet_log.json"
     
@@ -203,7 +202,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 packet_time = time.time()
                 packets_received += 1
-                print(f"packet received {packets_received}")
+                logger.debug(f"packet received {packets_received}")
                 relative_time = packet_time - session_start_time
                 
                 # Log detailed connection statistics every 100 packets
@@ -430,11 +429,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 except asyncio.CancelledError:
                     pass
         
-        # Save the raw opus data
-        with open(raw_filename, "wb") as f:
-            f.write(opus_buffer)
-        logger.info(f"Saved raw opus data to {raw_filename}")
-        
         # Write packet log to JSON file
         with open(packet_log_filename, "w") as f:
             json.dump(packet_log, f, indent=2, default=str)
@@ -481,7 +475,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Save as WAV file
                     save_wav_file(pcm_data, decoded_filename)
                     
-                    logger.info(f"Saved final decoded audio to {decoded_filename}")
                     logger.info(f"Audio stats: {CHANNELS} channels, {SAMPLE_RATE} Hz, {len(pcm_data)/SAMPLE_RATE:.2f} seconds")
                 except Exception as e:
                     logger.error(f"Error saving decoded audio: {e}")

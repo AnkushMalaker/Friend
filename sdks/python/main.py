@@ -9,6 +9,8 @@ import numpy as np
 from omi.bluetooth import listen_to_omi
 from omi.decoder import OmiOpusDecoder
 from omi.transcribe import transcribe, transcribe_wyoming
+from websockets.client import connect as websocket_connect
+from websockets.exceptions import ConnectionClosed
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -105,12 +107,26 @@ def main():
     async def run():
         await asyncio.gather(
             listen_to_omi(OMI_MAC, OMI_CHAR_UUID, handle_ble_data),
+            # transcribe(audio_queue, "a9bab333cbc53de93ecc5371726e6f9e8a95c51e"),
             # transcribe_wyoming(audio_queue, "tcp://192.168.0.110:10300"),
-            transcribe_wyoming(audio_queue, "tcp://0.tcp.in.ngrok.io:13156"),
-            save_audio_periodically()
+            # transcribe_wyoming(audio_queue, "tcp://0.tcp.in.ngrok.io:13156"),
+            send_to_stt_backend(audio_queue, "ws://192.168.0.110:8585"),
+            # save_audio_periodically()
         )
 
     asyncio.run(run())
+
+async def send_to_stt_backend(audio_queue, url):
+    logger.info(f"Sending audio to STT backend at {url}")
+    try:
+        async with websocket_connect(url) as ws:
+            while True:
+                audio_data = await audio_queue.get()
+                await ws.send(audio_data)
+    except ConnectionClosed:
+        logger.error("Connection to STT backend closed.")
+    except Exception as e:
+        logger.error(f"Error sending audio to STT backend: {e}")
 
 if __name__ == '__main__':
     main()
